@@ -41,14 +41,84 @@ pub fn compute_line(item: &LineItem) -> LineResult {
     }
 }
 
+/// Split one CSV row into raw (still-quoted) fields, honoring quotes so a
+/// comma inside a quoted field doesn't end the field. Quote state is tracked
+/// across the whole row and toggled on every `"`, which is what lets a
+/// doubled `""` (an escaped quote) pass through without prematurely closing
+/// the field - the actual unescaping happens later, in `unquote_field`.
+fn split_csv_fields(raw: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for c in raw.chars() {
+        match c {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(c);
+            }
+            ',' if !in_quotes => {
+                fields.push(current.clone());
+                current.clear();
+            }
+            _ => current.push(c),
+        }
+    }
+    fields.push(current);
+    fields
+}
+
+/// Trim a raw field and, if it's quoted, strip the surrounding quotes and
+/// unescape `""` to `"`. A field is only treated as quoted if the quote is
+/// the first character after trimming - anything else with a stray `"` is
+/// an error rather than a silent misparse.
+///
+/// This does not support a quoted field spanning multiple CSV lines; each
+/// row is still read and parsed one line at a time.
+fn unquote_field(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if !trimmed.starts_with('"') {
+        if trimmed.contains('"') {
+            return Err(format!("stray quote in unquoted field: {}", trimmed));
+        }
+        return Ok(trimmed.to_string());
+    }
+
+    if trimmed.len() < 2 || !trimmed.ends_with('"') {
+        return Err(format!("unterminated quoted field: {}", trimmed));
+    }
+
+    let inner = &trimmed[1..trimmed.len() - 1];
+    let mut result = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            if chars.peek() == Some(&'"') {
+                result.push('"');
+                chars.next();
+            } else {
+                return Err(format!("invalid quote escaping in field: {}", trimmed));
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(result)
+}
+
 /// Parse one CSV row: description,quantity,unit_price,discount_percent,tax_rate
 ///
-/// No header row, no quoted fields yet - a description containing a comma
-/// will misparse. Fine for a first pass; real CSV quoting is on the list.
+/// No header row. A field may be wrapped in double quotes to contain a
+/// comma (or a literal quote, doubled as `""`); unquoted fields may not
+/// contain a `"` at all.
 pub fn parse_line(raw: &str) -> Result<LineItem, String> {
-    let fields: Vec<&str> = raw.split(',').map(|f| f.trim()).collect();
-    if fields.len() != 5 {
-        return Err(format!("expected 5 fields, got {}", fields.len()));
+    let raw_fields = split_csv_fields(raw);
+    if raw_fields.len() != 5 {
+        return Err(format!("expected 5 fields, got {}", raw_fields.len()));
+    }
+    let mut fields: Vec<String> = Vec::with_capacity(5);
+    for f in &raw_fields {
+        fields.push(unquote_field(f)?);
     }
 
     let description = fields[0].to_string();
@@ -272,9 +342,24 @@ mod tests {
             ("Widget,2,9.99,150,5", "discount over 100 percent"),
             ("Widget,2,9.99,-5,5", "negative discount"),
             ("Widget,2,9.99,0,-5", "negative tax rate"),
+            (r#""Widget,2,9.99,0,5"#, "unterminated quote"),
+            (r#"Widget "XL",2,9.99,0,5"#, "stray quote outside a quoted field"),
         ];
         for (input, name) in cases {
             assert!(parse_line(input).is_err(), "{}: expected error, input {:?}", name, input);
         }
+    }
+
+    #[test]
+    fn parse_line_handles_quoted_descriptions() {
+        let item = parse_line(r#""Widgets, Deluxe",2,9.99,0,5"#).expect("should parse");
+        assert_eq!(item.description, "Widgets, Deluxe");
+        assert_eq!(item.quantity, 2.0);
+
+        let item = parse_line(r#""Widget ""XL""",1,10,0,0"#).expect("should parse");
+        assert_eq!(item.description, r#"Widget "XL""#);
+
+        let item = parse_line(r#"  "Padded Field" , 2 , 9.99 , 0 , 5  "#).expect("should parse");
+        assert_eq!(item.description, "Padded Field");
     }
 }

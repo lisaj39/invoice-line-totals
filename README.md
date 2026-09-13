@@ -22,6 +22,10 @@ Input is a CSV file with one line item per row, no header, five columns:
 description,quantity,unit_price,discount_percent,tax_rate
 ```
 
+A field may be wrapped in double quotes to contain a comma, e.g.
+`"Widgets, Deluxe",2,9.99,0,5`. A literal quote inside a quoted field is
+written doubled (`""`). Unquoted fields may not contain a `"`.
+
 Example `items.csv`:
 
 ```
@@ -72,8 +76,8 @@ lines) are both valid and net out of the grand total as expected.
 
 ## Known limitations
 
-- CSV parsing is a plain comma split - a description containing a
-  comma will break the row. No quoting support yet.
+- A quoted field can't contain a newline; each row is still read and
+  parsed one line at a time.
 - No header row is expected or skipped; the first line is always
   treated as data.
 
