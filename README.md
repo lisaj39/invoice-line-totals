@@ -62,6 +62,17 @@ cat items.csv | cargo run
 Negative quantities (returned goods) and negative unit prices (credit
 lines) are both valid and net out of the grand total as expected.
 
+Pass `--json` (before or after the file argument) to get the same
+numbers as JSON instead of a table, for piping into another program:
+
+```
+cargo run -- --json items.csv
+```
+
+```
+{"lines":[{"description":"Widget A","extended":59.97,"discount":0.00,"tax":4.95,"total":64.92},{"description":"Consulting hour","extended":75.00,"discount":7.50,"tax":0.00,"total":67.50},{"description":"Restocking credit","extended":-15.00,"discount":0.00,"tax":0.00,"total":-15.00},{"description":"Bulk order","extended":99.99,"discount":0.00,"tax":8.25,"total":108.24}],"grand_total":225.66}
+```
+
 ## Rules
 
 - `discount_percent` must be between 0 and 100.
